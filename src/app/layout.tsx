@@ -18,11 +18,13 @@ const body = DM_Sans({
 
 const siteUrl =
   process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ||
-  "https://roastmyx.app";
+  "https://roast-my-x-theta.vercel.app";
 
 const title = "Roast My X — Get roasted. Then get better.";
 const description =
   "Witty, specific AI roasts of your website, resume, pitch deck, or GitHub repo — as a shareable card, plus optional real feedback.";
+
+const ogImageUrl = `${siteUrl}/og-image.png`;
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
@@ -38,7 +40,7 @@ export const metadata: Metadata = {
     description,
     images: [
       {
-        url: "/og-image.png",
+        url: ogImageUrl,
         width: 1200,
         height: 630,
         alt: "Roast My X — Get roasted. Then get better.",
@@ -49,7 +51,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title,
     description,
-    images: ["/og-image.png"],
+    images: [ogImageUrl],
   },
 };
 
