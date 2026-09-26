@@ -37,7 +37,7 @@ export default function RoastCard({
         ) : null}
       </div>
 
-      <h2 className="font-[family-name:var(--font-display)] text-2xl font-bold leading-snug tracking-tight text-[var(--ink)] sm:text-[1.75rem]">
+      <h2 className="font-[family-name:var(--font-display)] text-xl font-bold leading-snug tracking-tight text-[var(--ink)] sm:text-2xl">
         {roast.headline}
       </h2>
 
@@ -58,8 +58,8 @@ export default function RoastCard({
         </p>
       </div>
 
-      <div className="mt-6 flex items-end justify-between gap-3 border-t border-[var(--border)] pt-4">
-        <p className="text-[0.7rem] text-[var(--muted)]">
+      <div className="mt-6 flex flex-col gap-2 border-t border-[var(--border)] pt-4 sm:flex-row sm:items-end sm:justify-between sm:gap-3">
+        <p className="text-[0.7rem] leading-relaxed text-[var(--muted)]">
           Generated for entertainment. Be kind when you share.
         </p>
         <p className="shrink-0 font-[family-name:var(--font-display)] text-xs font-medium text-[var(--ember)]">

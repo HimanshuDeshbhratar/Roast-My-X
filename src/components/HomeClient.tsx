@@ -2,9 +2,19 @@
 
 import { useRef, useState, type FormEvent } from "react";
 import { toPng } from "html-to-image";
+import {
+  toAnalyticsMode,
+  trackModeSelected,
+  trackRealFeedbackRequested,
+  trackRoastGenerated,
+  trackShareClicked,
+} from "@/lib/analytics";
+import ErrorCard from "@/components/ErrorCard";
+import ExampleShowcase from "@/components/ExampleShowcase";
 import FeedbackPanel from "@/components/FeedbackPanel";
 import RoastCard from "@/components/RoastCard";
 import type { FeedbackResult, RoastResult } from "@/lib/roastEngine";
+import { validateUpload, wittyErrorMessage } from "@/lib/wittyErrors";
 
 type Mode = "website" | "resume" | "pitch" | "code";
 
@@ -55,11 +65,30 @@ export default function HomeClient() {
     setFile(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
     resetOutput();
+    trackModeSelected(toAnalyticsMode(next));
+  }
+
+  function onFileChange(next: File | null) {
+    setFile(next);
+    if (!next || (mode !== "resume" && mode !== "pitch")) return;
+    const validation = validateUpload(mode, next);
+    setError(validation);
   }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     resetOutput();
+
+    const analyticsMode = toAnalyticsMode(mode);
+
+    if (mode === "resume" || mode === "pitch") {
+      const validation = validateUpload(mode, file);
+      if (validation) {
+        setError(validation);
+        trackRoastGenerated(analyticsMode, false);
+        return;
+      }
+    }
 
     setLoading(true);
     try {
@@ -67,7 +96,9 @@ export default function HomeClient() {
 
       if (mode === "website") {
         const trimmed = url.trim();
-        if (!trimmed) throw new Error("Paste a website URL to roast.");
+        if (!trimmed) {
+          throw new Error(wittyErrorMessage("website", "URL is required", 400));
+        }
         res = await fetch("/api/roast", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -75,23 +106,20 @@ export default function HomeClient() {
         });
       } else if (mode === "code") {
         const trimmed = repo.trim();
-        if (!trimmed) throw new Error("Paste a GitHub repo (owner/repo or URL).");
+        if (!trimmed) {
+          throw new Error(
+            wittyErrorMessage("code", "GitHub repo is required", 400)
+          );
+        }
         res = await fetch("/api/roast", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ mode: "code", repo: trimmed }),
         });
       } else {
-        if (!file) {
-          throw new Error(
-            mode === "resume"
-              ? "Choose a resume PDF to upload."
-              : "Choose a PDF or PPTX pitch deck."
-          );
-        }
         const form = new FormData();
         form.set("mode", mode);
-        form.set("file", file);
+        form.set("file", file!);
         res = await fetch("/api/roast", { method: "POST", body: form });
       }
 
@@ -104,16 +132,19 @@ export default function HomeClient() {
       };
 
       if (!res.ok) {
-        if (res.status === 429) {
-          const mins = Math.ceil((data.retryAfter || 3600) / 60);
-          throw new Error(
-            `You've hit the roast limit (5/hour). Try again in ~${mins} min.`
-          );
-        }
-        throw new Error(data.error || "Roast failed");
+        const mapped = wittyErrorMessage(
+          mode,
+          data.error || "Roast failed",
+          res.status
+        );
+        trackRoastGenerated(analyticsMode, false);
+        throw new Error(mapped);
       }
 
-      if (!data.roast) throw new Error("No roast returned");
+      if (!data.roast) {
+        trackRoastGenerated(analyticsMode, false);
+        throw new Error(wittyErrorMessage(mode, "No roast returned", 500));
+      }
 
       setRoast(data.roast);
       setRoastId(data.roastId || null);
@@ -124,8 +155,11 @@ export default function HomeClient() {
           url.trim() ||
           repo.trim()
       );
+      trackRoastGenerated(analyticsMode, true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
+      const raw = err instanceof Error ? err.message : "Something went wrong";
+      setError(wittyErrorMessage(mode, raw));
+      trackRoastGenerated(toAnalyticsMode(mode), false);
     } finally {
       setLoading(false);
     }
@@ -144,6 +178,7 @@ export default function HomeClient() {
       link.download = "roast-my-x.png";
       link.href = dataUrl;
       link.click();
+      trackShareClicked(toAnalyticsMode(mode), "download");
     } catch {
       setError("Could not generate image. Try again.");
     } finally {
@@ -163,6 +198,7 @@ export default function HomeClient() {
       "_blank",
       "noopener,noreferrer"
     );
+    trackShareClicked(toAnalyticsMode(mode), "twitter");
   }
 
   async function handleFeedbackSubmit(e: FormEvent) {
@@ -185,11 +221,9 @@ export default function HomeClient() {
         retryAfter?: number;
       };
       if (!res.ok) {
-        if (res.status === 429) {
-          const mins = Math.ceil((data.retryAfter || 3600) / 60);
-          throw new Error(`Rate limited. Try again in ~${mins} min.`);
-        }
-        throw new Error(data.error || "Feedback failed");
+        throw new Error(
+          wittyErrorMessage(mode, data.error || "Feedback failed", res.status)
+        );
       }
       if (!data.feedback) throw new Error("No feedback returned");
       setFeedback(data.feedback);
@@ -204,26 +238,28 @@ export default function HomeClient() {
   const activeHint = MODES.find((m) => m.id === mode)?.hint || "";
 
   return (
-    <div className="mx-auto flex w-full max-w-2xl flex-col px-4 pb-20 pt-10 sm:px-6 sm:pt-14">
-      <header className="mb-10 text-center sm:mb-12">
+    <div className="mx-auto flex w-full max-w-2xl flex-col px-4 pb-10 pt-8 sm:px-6 sm:pb-16 sm:pt-14">
+      <header className="mb-8 text-center sm:mb-12">
         <p className="mb-3 font-[family-name:var(--font-display)] text-xs font-semibold uppercase tracking-[0.22em] text-[var(--ember)]">
           Roast My X
         </p>
-        <h1 className="font-[family-name:var(--font-display)] text-4xl font-bold tracking-tight text-[var(--ink)] sm:text-5xl">
+        <h1 className="font-[family-name:var(--font-display)] text-[2.35rem] font-bold leading-[1.1] tracking-tight text-[var(--ink)] sm:text-5xl">
           Get roasted.
           <br />
           <span className="text-[var(--ink-soft)]">Then get better.</span>
         </h1>
-        <p className="mx-auto mt-4 max-w-md text-base leading-relaxed text-[var(--muted)]">
+        <p className="mx-auto mt-4 max-w-md text-[0.95rem] leading-relaxed text-[var(--muted)] sm:text-base">
           Website, resume, pitch deck, or GitHub repo — one engine, a witty
           roast card, and optional real feedback.
         </p>
       </header>
 
+      <ExampleShowcase />
+
       <div
         role="tablist"
         aria-label="Roast mode"
-        className="mb-6 flex flex-wrap justify-center gap-2"
+        className="mb-5 flex w-full gap-1.5 overflow-x-auto pb-1 sm:mb-6 sm:flex-wrap sm:justify-center sm:gap-2 sm:overflow-visible sm:pb-0"
       >
         {MODES.map((m) => {
           const active = mode === m.id;
@@ -235,7 +271,7 @@ export default function HomeClient() {
               aria-selected={active}
               onClick={() => switchMode(m.id)}
               className={[
-                "rounded-lg px-3.5 py-2 text-sm font-medium transition",
+                "shrink-0 rounded-lg px-3 py-2 text-sm font-medium transition whitespace-nowrap",
                 active
                   ? "bg-[var(--ember)] text-[var(--on-ember)]"
                   : "bg-[var(--chip)] text-[var(--ink-soft)] hover:bg-[var(--chip-hover)]",
@@ -269,7 +305,7 @@ export default function HomeClient() {
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
                 disabled={loading}
-                className="min-w-0 flex-1 rounded-xl border border-[var(--border)] bg-[var(--input)] px-4 py-3 text-[var(--ink)] outline-none placeholder:text-[var(--muted)] focus:border-[var(--ember)]"
+                className="min-w-0 w-full flex-1 rounded-xl border border-[var(--border)] bg-[var(--input)] px-4 py-3 text-[var(--ink)] outline-none placeholder:text-[var(--muted)] focus:border-[var(--ember)]"
               />
               <SubmitButton loading={loading} />
             </div>
@@ -292,7 +328,7 @@ export default function HomeClient() {
                 value={repo}
                 onChange={(e) => setRepo(e.target.value)}
                 disabled={loading}
-                className="min-w-0 flex-1 rounded-xl border border-[var(--border)] bg-[var(--input)] px-4 py-3 text-[var(--ink)] outline-none placeholder:text-[var(--muted)] focus:border-[var(--ember)]"
+                className="min-w-0 w-full flex-1 rounded-xl border border-[var(--border)] bg-[var(--input)] px-4 py-3 text-[var(--ink)] outline-none placeholder:text-[var(--muted)] focus:border-[var(--ember)]"
               />
               <SubmitButton loading={loading} />
             </div>
@@ -312,62 +348,75 @@ export default function HomeClient() {
                 ref={fileInputRef}
                 id="file"
                 type="file"
-                accept={mode === "resume" ? "application/pdf,.pdf" : ".pdf,.pptx,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation"}
+                accept={
+                  mode === "resume"
+                    ? "application/pdf,.pdf"
+                    : ".pdf,.pptx,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                }
                 disabled={loading}
-                onChange={(e) => setFile(e.target.files?.[0] || null)}
-                className="min-w-0 flex-1 text-sm text-[var(--ink-soft)] file:mr-3 file:rounded-lg file:border-0 file:bg-[var(--chip)] file:px-3 file:py-2 file:text-sm file:font-medium file:text-[var(--ink)] hover:file:bg-[var(--chip-hover)]"
+                onChange={(e) => onFileChange(e.target.files?.[0] || null)}
+                className="min-w-0 w-full flex-1 text-sm text-[var(--ink-soft)] file:mr-3 file:rounded-lg file:border-0 file:bg-[var(--chip)] file:px-3 file:py-2 file:text-sm file:font-medium file:text-[var(--ink)] hover:file:bg-[var(--chip-hover)]"
               />
               <SubmitButton loading={loading} />
             </div>
             {file ? (
-              <p className="mt-2 text-xs text-[var(--muted)]">
+              <p className="mt-2 break-all text-xs text-[var(--muted)]">
                 Selected: {file.name} ({(file.size / 1024 / 1024).toFixed(2)} MB)
               </p>
             ) : null}
           </>
         ) : null}
 
-        <p className="mt-2.5 text-xs text-[var(--muted)]">
+        <p className="mt-2.5 text-xs leading-relaxed text-[var(--muted)]">
           {activeHint}. 5 free roasts per hour. Uploads are processed in memory
           and not retained.
         </p>
       </form>
 
-      {error ? (
-        <div
-          role="alert"
-          className="mt-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200"
-        >
-          {error}
+      {error && !loading ? (
+        <div className="mt-6 flex justify-center">
+          <ErrorCard
+            headline={error}
+            detail="No stack traces, no 500 pages — just try another input."
+            onRetry={() => setError(null)}
+          />
         </div>
       ) : null}
 
       {loading ? (
-        <div className="mt-8 flex flex-col items-center gap-3 py-10 text-center">
+        <div className="mt-8 flex flex-col items-center gap-3 px-2 py-10 text-center">
           <div
             className="h-8 w-8 animate-spin rounded-full border-2 border-[var(--ember)] border-t-transparent"
             aria-hidden
           />
-          <p className="text-sm text-[var(--muted)]">{LOADING_COPY[mode]}</p>
+          <p className="max-w-sm text-sm text-[var(--muted)]">
+            {LOADING_COPY[mode]}
+          </p>
         </div>
       ) : null}
 
       {roast && !loading ? (
-        <div className="mt-8 flex flex-col items-center gap-4">
-          <RoastCard roast={roast} sourceLabel={sourceLabel} cardRef={cardRef} />
-          <div className="flex flex-wrap justify-center gap-3">
+        <div className="mt-8 flex w-full flex-col items-center gap-4">
+          <div className="w-full max-w-[560px]">
+            <RoastCard
+              roast={roast}
+              sourceLabel={sourceLabel}
+              cardRef={cardRef}
+            />
+          </div>
+          <div className="flex w-full max-w-[560px] flex-col gap-3 sm:flex-row sm:flex-wrap sm:justify-center">
             <button
               type="button"
               onClick={handleDownload}
               disabled={downloading}
-              className="rounded-xl border border-[var(--border)] bg-[var(--chip)] px-4 py-2.5 text-sm font-medium text-[var(--ink)] transition hover:bg-[var(--chip-hover)] disabled:opacity-60"
+              className="w-full rounded-xl border border-[var(--border)] bg-[var(--chip)] px-4 py-2.5 text-sm font-medium text-[var(--ink)] transition hover:bg-[var(--chip-hover)] disabled:opacity-60 sm:w-auto"
             >
               {downloading ? "Rendering…" : "Download image"}
             </button>
             <button
               type="button"
               onClick={handleShare}
-              className="rounded-xl bg-[var(--ink)] px-4 py-2.5 text-sm font-medium text-[var(--bg)] transition hover:opacity-90"
+              className="w-full rounded-xl bg-[var(--ink)] px-4 py-2.5 text-sm font-medium text-[var(--bg)] transition hover:opacity-90 sm:w-auto"
             >
               Share to X
             </button>
@@ -378,7 +427,10 @@ export default function HomeClient() {
               {!showEmailGate ? (
                 <button
                   type="button"
-                  onClick={() => setShowEmailGate(true)}
+                  onClick={() => {
+                    setShowEmailGate(true);
+                    trackRealFeedbackRequested(toAnalyticsMode(mode));
+                  }}
                   className="w-full rounded-xl border border-dashed border-[var(--ember)]/50 bg-[var(--real-talk-bg)] px-4 py-3 text-sm font-medium text-[var(--ink-soft)] transition hover:border-[var(--ember)] hover:text-[var(--ink)]"
                 >
                   Get the real feedback instead →
@@ -400,12 +452,12 @@ export default function HomeClient() {
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
                       disabled={feedbackLoading}
-                      className="min-w-0 flex-1 rounded-xl border border-[var(--border)] bg-[var(--input)] px-4 py-3 text-[var(--ink)] outline-none placeholder:text-[var(--muted)] focus:border-[var(--ember)]"
+                      className="min-w-0 w-full flex-1 rounded-xl border border-[var(--border)] bg-[var(--input)] px-4 py-3 text-[var(--ink)] outline-none placeholder:text-[var(--muted)] focus:border-[var(--ember)]"
                     />
                     <button
                       type="submit"
                       disabled={feedbackLoading}
-                      className="rounded-xl bg-[var(--ember)] px-5 py-3 text-sm font-semibold text-[var(--on-ember)] transition hover:brightness-110 disabled:opacity-70"
+                      className="w-full shrink-0 rounded-xl bg-[var(--ember)] px-5 py-3 text-sm font-semibold text-[var(--on-ember)] transition hover:brightness-110 disabled:opacity-70 sm:w-auto"
                     >
                       {feedbackLoading ? "Writing…" : "Send feedback"}
                     </button>
@@ -415,7 +467,7 @@ export default function HomeClient() {
             </div>
           ) : null}
 
-          <p className="max-w-sm text-center text-xs text-[var(--muted)]">
+          <p className="max-w-sm px-2 text-center text-xs text-[var(--muted)]">
             Tip: download the image first, then attach it when you post — X
             intent can&apos;t auto-attach files.
           </p>
@@ -423,7 +475,7 @@ export default function HomeClient() {
       ) : null}
 
       {feedback && !loading ? (
-        <div className="mt-6 flex flex-col items-center">
+        <div className="mt-6 flex w-full flex-col items-center px-0">
           <FeedbackPanel feedback={feedback} />
         </div>
       ) : null}
@@ -436,7 +488,7 @@ function SubmitButton({ loading }: { loading: boolean }) {
     <button
       type="submit"
       disabled={loading}
-      className="rounded-xl bg-[var(--ember)] px-5 py-3 font-[family-name:var(--font-display)] text-sm font-semibold text-[var(--on-ember)] transition hover:brightness-110 disabled:cursor-wait disabled:opacity-70"
+      className="w-full shrink-0 rounded-xl bg-[var(--ember)] px-5 py-3 font-[family-name:var(--font-display)] text-sm font-semibold text-[var(--on-ember)] transition hover:brightness-110 disabled:cursor-wait disabled:opacity-70 sm:w-auto"
     >
       {loading ? "Roasting…" : "Roast it"}
     </button>

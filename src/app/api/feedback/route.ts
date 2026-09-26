@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { captureEmail } from "@/lib/emailCapture";
+import {
+  checkGlobalCap,
+  GLOBAL_CAP_USER_MESSAGE,
+} from "@/lib/globalCap";
 import { checkRateLimit, getClientIp } from "@/lib/rateLimit";
 import { generateFeedback } from "@/lib/roastEngine";
 import { getRoastSession } from "@/lib/roastSession";
@@ -14,12 +18,30 @@ export async function POST(req: NextRequest) {
   if (!limit.allowed) {
     const retryAfter = Math.ceil((limit.resetAt - Date.now()) / 1000);
     return NextResponse.json(
-      { error: "Rate limit exceeded. Try again later.", retryAfter },
+      {
+        error: "Easy, chef — you've hit the roast limit. Come back in a bit.",
+        retryAfter,
+      },
       {
         status: 429,
         headers: {
           "Retry-After": String(Math.max(retryAfter, 1)),
           "X-RateLimit-Remaining": "0",
+        },
+      }
+    );
+  }
+
+  const global = checkGlobalCap();
+  if (!global.allowed) {
+    const retryAfter = Math.ceil((global.resetAt - Date.now()) / 1000);
+    return NextResponse.json(
+      { error: GLOBAL_CAP_USER_MESSAGE, retryAfter },
+      {
+        status: 429,
+        headers: {
+          "Retry-After": String(Math.max(retryAfter, 1)),
+          "X-Global-Cap": global.reason,
         },
       }
     );
@@ -66,7 +88,10 @@ export async function POST(req: NextRequest) {
     });
 
     return NextResponse.json(
-      { feedback, meta: { type: session.type, sourceLabel: session.sourceLabel } },
+      {
+        feedback,
+        meta: { type: session.type, sourceLabel: session.sourceLabel },
+      },
       {
         headers: { "X-RateLimit-Remaining": String(limit.remaining) },
       }

@@ -1,4 +1,10 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import {
+  getSafeFallbackRoast,
+  logSafetyTrigger,
+  roastFailsSafety,
+  SAFETY_RETRY_REMINDER,
+} from "@/lib/safetyFilter";
 
 export type RoastType = "website" | "resume" | "pitch deck" | "codebase";
 
@@ -190,15 +196,46 @@ function getModel(systemInstruction: string) {
   });
 }
 
-/** Shared roast engine — used by every mode. */
-export async function generateRoast(input: RoastInput): Promise<RoastResult> {
+async function generateRoastOnce(
+  input: RoastInput,
+  extraUserNote?: string
+): Promise<RoastResult> {
   const model = getModel(buildPrompt(ROAST_SYSTEM_PROMPT, input.type));
-  const result = await model.generateContent(
-    buildParts(input, `Here is the ${input.type} content to roast:`)
-  );
+  const leadIn = `Here is the ${input.type} content to roast:`;
+  const parts = buildParts(input, leadIn);
+  if (extraUserNote) {
+    parts.push(extraUserNote);
+  }
+  const result = await model.generateContent(parts);
   const text = result.response.text();
   if (!text) throw new Error("No text response from Gemini");
   return parseRoastJson(text);
+}
+
+/**
+ * Shared roast engine — used by every mode.
+ * System prompt is unchanged; a lightweight safety backstop may retry once.
+ */
+export async function generateRoast(input: RoastInput): Promise<RoastResult> {
+  const first = await generateRoastOnce(input);
+  if (!roastFailsSafety(first)) return first;
+
+  logSafetyTrigger({
+    attempt: 1,
+    type: input.type,
+    snippet: first.headline,
+  });
+
+  const second = await generateRoastOnce(input, SAFETY_RETRY_REMINDER);
+  if (!roastFailsSafety(second)) return second;
+
+  logSafetyTrigger({
+    attempt: 2,
+    type: input.type,
+    snippet: second.headline,
+  });
+
+  return getSafeFallbackRoast();
 }
 
 /** Serious critique variant — same input pipeline, different system prompt. */

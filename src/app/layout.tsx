@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { DM_Sans, Syne } from "next/font/google";
+import Analytics from "@/components/Analytics";
+import SiteFooter from "@/components/SiteFooter";
 import "./globals.css";
 
 const display = Syne({
@@ -14,10 +16,41 @@ const body = DM_Sans({
   weight: ["400", "500", "600", "700"],
 });
 
+const siteUrl =
+  process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ||
+  "https://roastmyx.app";
+
+const title = "Roast My X — Get roasted. Then get better.";
+const description =
+  "Witty, specific AI roasts of your website, resume, pitch deck, or GitHub repo — as a shareable card, plus optional real feedback.";
+
 export const metadata: Metadata = {
-  title: "Roast My X — witty, specific AI roasts",
-  description:
-    "Submit a website and get a witty, specific AI roast as a shareable card — plus real constructive feedback.",
+  metadataBase: new URL(siteUrl),
+  title,
+  description,
+  applicationName: "Roast My X",
+  openGraph: {
+    type: "website",
+    locale: "en_US",
+    url: siteUrl,
+    siteName: "Roast My X",
+    title,
+    description,
+    images: [
+      {
+        url: "/og-image.png",
+        width: 1200,
+        height: 630,
+        alt: "Roast My X — Get roasted. Then get better.",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title,
+    description,
+    images: ["/og-image.png"],
+  },
 };
 
 export default function RootLayout({
@@ -27,7 +60,11 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className={`${display.variable} ${body.variable} h-full`}>
-      <body className="min-h-full antialiased">{children}</body>
+      <body className="flex min-h-full flex-col antialiased">
+        <Analytics />
+        <div className="flex flex-1 flex-col">{children}</div>
+        <SiteFooter />
+      </body>
     </html>
   );
 }

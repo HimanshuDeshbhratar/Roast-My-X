@@ -3,10 +3,15 @@ import { extractGithubRepo } from "@/lib/extractGithub";
 import { extractPdfText, pagesAsSlideSummary } from "@/lib/extractPdf";
 import { extractPptx } from "@/lib/extractPptx";
 import { extractWebsite, normalizeUrl } from "@/lib/extractWebsite";
+import {
+  checkGlobalCap,
+  GLOBAL_CAP_USER_MESSAGE,
+} from "@/lib/globalCap";
 import { checkRateLimit, getClientIp } from "@/lib/rateLimit";
 import { generateRoast, type RoastType } from "@/lib/roastEngine";
 import { saveRoastSession } from "@/lib/roastSession";
 import { captureScreenshot } from "@/lib/screenshot";
+import { wittyErrorMessage, type RoastMode } from "@/lib/wittyErrors";
 
 export const maxDuration = 60;
 export const runtime = "nodejs";
@@ -14,7 +19,7 @@ export const runtime = "nodejs";
 const MAX_RESUME_BYTES = 5 * 1024 * 1024;
 const MAX_DECK_BYTES = 8 * 1024 * 1024;
 
-type Mode = "website" | "resume" | "pitch" | "code";
+type Mode = RoastMode;
 
 function modeToType(mode: Mode): RoastType {
   switch (mode) {
@@ -37,7 +42,10 @@ function rateLimited(req: NextRequest) {
     return {
       ok: false as const,
       response: NextResponse.json(
-        { error: "Rate limit exceeded. Try again later.", retryAfter },
+        {
+          error: "Easy, chef — you've hit the roast limit. Come back in a bit.",
+          retryAfter,
+        },
         {
           status: 429,
           headers: {
@@ -48,6 +56,25 @@ function rateLimited(req: NextRequest) {
       ),
     };
   }
+
+  const global = checkGlobalCap();
+  if (!global.allowed) {
+    const retryAfter = Math.ceil((global.resetAt - Date.now()) / 1000);
+    return {
+      ok: false as const,
+      response: NextResponse.json(
+        { error: GLOBAL_CAP_USER_MESSAGE, retryAfter },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": String(Math.max(retryAfter, 1)),
+            "X-Global-Cap": global.reason,
+          },
+        }
+      ),
+    };
+  }
+
   return { ok: true as const, limit, ip };
 }
 
@@ -205,9 +232,9 @@ export async function POST(req: NextRequest) {
   if (!limited.ok) return limited.response;
 
   const contentType = req.headers.get("content-type") || "";
+  let mode: Mode = "website";
 
   try {
-    let mode: Mode = "website";
     let url = "";
     let repo = "";
     let file: File | null = null;
@@ -238,7 +265,6 @@ export async function POST(req: NextRequest) {
       repo = body.repo || "";
     }
 
-    // Touch modeToType so TypeScript keeps the mapping used for sessions
     void modeToType(mode);
 
     let payload:
@@ -250,20 +276,35 @@ export async function POST(req: NextRequest) {
     if (mode === "website") {
       if (!url || url.length > 2048) {
         return NextResponse.json(
-          { error: url ? "URL too long" : "URL is required" },
+          {
+            error: wittyErrorMessage(
+              "website",
+              url ? "URL too long" : "URL is required",
+              400
+            ),
+          },
           { status: 400 }
         );
       }
       payload = await handleWebsite(url);
     } else if (mode === "resume") {
       if (!file) {
-        return NextResponse.json({ error: "PDF file is required" }, { status: 400 });
+        return NextResponse.json(
+          { error: wittyErrorMessage("resume", "PDF file is required", 400) },
+          { status: 400 }
+        );
       }
       payload = await handleResume(file);
     } else if (mode === "pitch") {
       if (!file) {
         return NextResponse.json(
-          { error: "PDF or PPTX file is required" },
+          {
+            error: wittyErrorMessage(
+              "pitch",
+              "PDF or PPTX file is required",
+              400
+            ),
+          },
           { status: 400 }
         );
       }
@@ -271,7 +312,13 @@ export async function POST(req: NextRequest) {
     } else {
       if (!repo || repo.length > 512) {
         return NextResponse.json(
-          { error: repo ? "Repo string too long" : "GitHub repo is required" },
+          {
+            error: wittyErrorMessage(
+              "code",
+              repo ? "Repo string too long" : "GitHub repo is required",
+              400
+            ),
+          },
           { status: 400 }
         );
       }
@@ -289,7 +336,7 @@ export async function POST(req: NextRequest) {
       err instanceof Error ? err.message : "Failed to generate roast";
 
     const status =
-      /invalid|required|too large|not allowed|private|must be|use owner/i.test(
+      /invalid|required|too large|not allowed|private|must be|use owner|browser history/i.test(
         message
       )
         ? 400
@@ -297,6 +344,9 @@ export async function POST(req: NextRequest) {
           ? 422
           : 500;
 
-    return NextResponse.json({ error: message }, { status });
+    return NextResponse.json(
+      { error: wittyErrorMessage(mode, message, status) },
+      { status }
+    );
   }
 }

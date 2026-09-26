@@ -64,11 +64,21 @@ async function ghJson<T>(path: string): Promise<T> {
     headers: githubHeaders(),
     signal: AbortSignal.timeout(15_000),
   });
-  if (res.status === 404) throw new Error("Repo not found (is it public?)");
+  if (res.status === 404) {
+    // Private repos often look like 404 without auth
+    throw new Error("Repo not found (is it public?)");
+  }
+  if (res.status === 401) {
+    throw new Error("That repo's more private than your browser history.");
+  }
   if (res.status === 403) {
-    throw new Error(
-      "GitHub rate limit hit. Add a free GITHUB_TOKEN in .env for higher limits."
-    );
+    const body = await res.text().catch(() => "");
+    if (/rate limit|secondary rate|abuse detection/i.test(body)) {
+      throw new Error(
+        "GitHub rate limit hit. Add a free GITHUB_TOKEN in .env for higher limits."
+      );
+    }
+    throw new Error("That repo's more private than your browser history.");
   }
   if (!res.ok) throw new Error(`GitHub API error (${res.status})`);
   return res.json() as Promise<T>;
