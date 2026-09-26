@@ -1,26 +1,41 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --bg: #0f0d0c;
+  --panel: #181412;
+  --card: #14110f;
+  --input: #1c1815;
+  --chip: #221e1a;
+  --chip-hover: #2c2621;
+  --border: #2e2823;
+  --ink: #f4efe8;
+  --ink-soft: #d4cbc0;
+  --muted: #8a7f74;
+  --ember: #e85d04;
+  --ember-deep: #c44d03;
+  --on-ember: #1a0e06;
+  --real-talk-bg: #1f1914;
+  --background: var(--bg);
+  --foreground: var(--ink);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
+  --font-sans: var(--font-body);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+body {
+  background:
+    radial-gradient(ellipse 80% 50% at 50% -20%, rgba(232, 93, 4, 0.14), transparent),
+    radial-gradient(ellipse 60% 40% at 100% 0%, rgba(180, 60, 20, 0.08), transparent),
+    var(--bg);
+  color: var(--foreground);
+  font-family: var(--font-body), system-ui, sans-serif;
+  min-height: 100%;
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+.roast-card {
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
 }
